@@ -10,3 +10,4 @@ scikit-image>=0.19.0
 matplotlib>=3.5.0
 pytesseract>=0.3.10
 ezdxf>=1.0.0
+streamlit-drawable-canvas>=0.9.0

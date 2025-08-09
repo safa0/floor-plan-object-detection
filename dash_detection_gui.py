@@ -12,22 +12,29 @@ import tempfile
 from PIL import Image
 import pandas as pd
 import json
-from typing import Optional, Tuple
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import math
+from typing import Optional, Tuple, List, Dict, Any
+from streamlit_drawable_canvas import st_canvas
+from skimage.morphology import skeletonize
+from scipy.signal import find_peaks
 
-# Import our integrated system
-from integrated_dash_detector import IntegratedDashDetector
+# Notebook-style pipeline only; no integrated system
 
 
 class DashDetectionGUI:
     """Streamlit GUI for dashed line detection."""
     
     def __init__(self):
-        self.detector = IntegratedDashDetector()
-        self.temp_dir = tempfile.mkdtemp()
-        
+        # Persist temp dir and image across reruns
+        if 'temp_dir' not in st.session_state:
+            st.session_state.temp_dir = tempfile.mkdtemp()
+        self.temp_dir = st.session_state.temp_dir
+
         # Session state initialization
+        if 'original_image' not in st.session_state:
+            st.session_state.original_image = None
+        if 'current_image_path' not in st.session_state:
+            st.session_state.current_image_path = None
         if 'image_loaded' not in st.session_state:
             st.session_state.image_loaded = False
         if 'template_learned' not in st.session_state:
@@ -36,6 +43,13 @@ class DashDetectionGUI:
             st.session_state.detection_results = []
         if 'roi_coordinates' not in st.session_state:
             st.session_state.roi_coordinates = None
+        if 'sample_params' not in st.session_state:
+            st.session_state.sample_params = None
+        if 'notebook_debug' not in st.session_state:
+            st.session_state.notebook_debug = {}
+
+        # Local refs
+        self.original_image = st.session_state.original_image
     
     def run(self):
         """Run the Streamlit application."""
@@ -48,9 +62,6 @@ class DashDetectionGUI:
         st.title("🏗️ Floor Plan Dashed Line Detection System")
         st.markdown("---")
         
-        # Sidebar for configuration
-        self.setup_sidebar()
-        
         # Main content
         col1, col2 = st.columns([2, 1])
         
@@ -58,80 +69,13 @@ class DashDetectionGUI:
             self.image_upload_section()
             if st.session_state.image_loaded:
                 self.template_learning_section()
-                self.scale_setting_section()
                 self.detection_section()
         
         with col2:
             self.results_section()
     
     def setup_sidebar(self):
-        """Setup the configuration sidebar."""
-        st.sidebar.header("⚙️ Configuration")
-        
-        # Preprocessing options
-        st.sidebar.subheader("Preprocessing")
-        self.detector.config['preprocessing']['apply_deskew'] = st.sidebar.checkbox(
-            "Apply Deskewing", 
-            value=self.detector.config['preprocessing']['apply_deskew']
-        )
-        self.detector.config['preprocessing']['apply_clahe'] = st.sidebar.checkbox(
-            "Apply CLAHE Enhancement", 
-            value=self.detector.config['preprocessing']['apply_clahe']
-        )
-        self.detector.config['preprocessing']['remove_text'] = st.sidebar.checkbox(
-            "Remove Text Regions", 
-            value=self.detector.config['preprocessing']['remove_text']
-        )
-        
-        # Detection options
-        st.sidebar.subheader("Detection Methods")
-        self.detector.config['detection']['use_classic'] = st.sidebar.checkbox(
-            "Template-based Detection", 
-            value=self.detector.config['detection']['use_classic']
-        )
-        self.detector.config['detection']['use_robust'] = st.sidebar.checkbox(
-            "Robust Detection (LSD + Gabor)", 
-            value=self.detector.config['detection']['use_robust']
-        )
-        self.detector.config['detection']['combine_methods'] = st.sidebar.checkbox(
-            "Combine Detection Methods", 
-            value=self.detector.config['detection']['combine_methods']
-        )
-        
-        if self.detector.config['detection']['combine_methods']:
-            self.detector.config['detection']['consensus_threshold'] = st.sidebar.slider(
-                "Consensus Threshold", 1, 4, 
-                self.detector.config['detection']['consensus_threshold']
-            )
-        
-        # Classification options
-        st.sidebar.subheader("Classification")
-        self.detector.config['classification']['use_legend'] = st.sidebar.checkbox(
-            "Use Legend-based Classification", 
-            value=self.detector.config['classification']['use_legend']
-        )
-        self.detector.config['classification']['min_confidence'] = st.sidebar.slider(
-            "Minimum Confidence", 0.0, 1.0, 
-            self.detector.config['classification']['min_confidence']
-        )
-        
-        # Output options
-        st.sidebar.subheader("Export Options")
-        self.detector.config['output']['export_svg'] = st.sidebar.checkbox(
-            "Export SVG", value=self.detector.config['output']['export_svg']
-        )
-        self.detector.config['output']['export_geojson'] = st.sidebar.checkbox(
-            "Export GeoJSON", value=self.detector.config['output']['export_geojson']
-        )
-        self.detector.config['output']['export_dxf'] = st.sidebar.checkbox(
-            "Export DXF", value=self.detector.config['output']['export_dxf']
-        )
-        self.detector.config['output']['export_csv'] = st.sidebar.checkbox(
-            "Export CSV", value=self.detector.config['output']['export_csv']
-        )
-        self.detector.config['output']['export_overlay'] = st.sidebar.checkbox(
-            "Export Overlay Image", value=self.detector.config['output']['export_overlay']
-        )
+        return  # No sidebar needed for notebook-only pipeline
     
     def image_upload_section(self):
         """Handle image upload and display."""
@@ -149,187 +93,104 @@ class DashDetectionGUI:
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            # Load image
-            if self.detector.load_image(temp_path):
-                st.session_state.image_loaded = True
-                
+            # Load image only if new or not yet loaded to avoid resetting state on reruns
+            should_load = (not st.session_state.image_loaded) or (st.session_state.current_image_path != temp_path)
+            if should_load:
+                img = cv2.imread(temp_path)
+                if img is None:
+                    st.error("Failed to load image. Please check the file format.")
+                    st.session_state.image_loaded = False
+                else:
+                    st.session_state.original_image = img
+                    st.session_state.image_loaded = True
+                    st.session_state.current_image_path = temp_path
+                    self.original_image = img
+            
+            if st.session_state.image_loaded and st.session_state.original_image is not None:
                 # Display image
                 st.subheader("📷 Loaded Image")
                 
                 # Convert to RGB for display
-                display_image = cv2.cvtColor(self.detector.original_image, cv2.COLOR_BGR2RGB)
+                display_image = cv2.cvtColor(st.session_state.original_image, cv2.COLOR_BGR2RGB)
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     st.image(display_image, caption="Original Image", use_column_width=True)
                 
-                with col2:
-                    if self.detector.processed_image is not None:
-                        st.image(self.detector.processed_image, caption="Processed Image", 
-                               use_column_width=True, clamp=True)
-                
                 # Image information
-                h, w = self.detector.original_image.shape[:2]
+                h, w = st.session_state.original_image.shape[:2]
                 st.info(f"Image Size: {w} × {h} pixels")
-            else:
-                st.error("Failed to load image. Please check the file format.")
-                st.session_state.image_loaded = False
     
     def template_learning_section(self):
-        """Handle template learning from user ROI selection."""
-        st.header("🎯 Template Learning")
+        """Handle sample learning from interactive ROI selection (notebook pipeline)."""
+        st.header("🎯 Sample Learning (Notebook Pipeline)")
         
         if not st.session_state.image_loaded:
             st.warning("Please upload an image first.")
             return
         
+        # Show learned sample params if available
+        if st.session_state.sample_params:
+            sp = st.session_state.sample_params
+            st.info(
+                f"📏 Sample params — stroke≈{sp.get('stroke_width', float('nan')):.1f}px, "
+                f"dash≈{sp.get('dash_len', float('nan')):.1f}px, gap≈{sp.get('gap_len', float('nan')):.1f}px, "
+                f"period≈{sp.get('period_px', float('nan')):.1f}px"
+            )
+        
         st.markdown("""
         **Instructions:**
-        1. Enter coordinates for a region containing a clean dash + gap sample
-        2. The system will learn the dash pattern from this region
-        3. This template will be used for classic template-based detection
+        1. Use the drawing tools below to select a region containing a clean dash + gap sample
+        2. Draw a rectangle around 1-2 complete dash cycles
+        3. Avoid areas with overlapping lines or text
+        4. Click "Learn Sample from Selected ROI" to extract pattern parameters
         """)
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            roi_x = st.number_input("ROI X (left)", min_value=0, 
-                                   max_value=self.detector.original_image.shape[1]-1, value=100)
-            roi_y = st.number_input("ROI Y (top)", min_value=0, 
-                                   max_value=self.detector.original_image.shape[0]-1, value=100)
-        
-        with col2:
-            roi_width = st.number_input("ROI Width", min_value=10, 
-                                      max_value=self.detector.original_image.shape[1], value=100)
-            roi_height = st.number_input("ROI Height", min_value=10, 
-                                       max_value=self.detector.original_image.shape[0], value=50)
-        
-        # Show ROI preview
-        if st.button("Preview ROI"):
-            self._show_roi_preview(roi_x, roi_y, roi_width, roi_height)
-        
-        # Learn template button
-        if st.button("🔍 Learn Template from ROI", type="primary"):
-            if self.detector.learn_template_from_roi(roi_x, roi_y, roi_width, roi_height):
-                st.success("✅ Template learned successfully!")
-                st.session_state.template_learned = True
-                st.session_state.roi_coordinates = (roi_x, roi_y, roi_width, roi_height)
-                
-                # Show template info
-                template = self.detector.classic_detector.dash_template
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Dash Length", f"{template.dash_length} px")
-                with col2:
-                    st.metric("Gap Length", f"{template.gap_length} px")
-                with col3:
-                    st.metric("Total Period", f"{template.total_period} px")
-            else:
-                st.error("❌ Failed to learn template. Please check ROI coordinates.")
-    
-    def scale_setting_section(self):
-        """Handle scale detection and manual setting."""
-        st.header("📏 Scale Setting")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Automatic Scale Detection")
-            if st.button("🔍 Auto-Detect Scale"):
-                if self.detector.detect_scale():
-                    scale_info = self.detector.scale_detector.get_scale_info()
-                    st.success(f"✅ Scale detected: {scale_info['scale_px_to_m']:.6f} px/m")
-                    st.info(f"Detection method: {scale_info['scale_type']}")
-                else:
-                    st.warning("⚠️ Could not auto-detect scale. Consider manual setting.")
-        
-        with col2:
-            st.subheader("Manual Scale Setting")
-            
-            # Manual scale input
-            point1_x = st.number_input("Point 1 X", value=100, key="p1x")
-            point1_y = st.number_input("Point 1 Y", value=100, key="p1y")
-            point2_x = st.number_input("Point 2 X", value=200, key="p2x")
-            point2_y = st.number_input("Point 2 Y", value=100, key="p2y")
-            known_distance = st.number_input("Known Distance (meters)", value=1.0, min_value=0.01)
-            
-            if st.button("📐 Set Manual Scale"):
-                if self.detector.set_manual_scale(
-                    (point1_x, point1_y), (point2_x, point2_y), known_distance
-                ):
-                    st.success("✅ Manual scale set successfully!")
-                else:
-                    st.error("❌ Failed to set manual scale.")
-        
-        # Show current scale
-        scale_info = self.detector.scale_detector.get_scale_info()
-        if scale_info['scale_px_to_m'] != 1.0:
-            st.info(f"Current scale: {scale_info['scale_px_to_m']:.6f} px/m")
+        self._interactive_roi_selection()
     
     def detection_section(self):
-        """Handle the detection process."""
-        st.header("🔎 Detection")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Individual detection steps
-            st.subheader("Step-by-Step Detection")
-            
-            if st.button("🔍 Detect Legend"):
-                if self.detector.detect_legend():
-                    st.success(f"✅ Legend detected with {len(self.detector.legend_entries)} entries")
-                    self._show_legend_entries()
-                else:
-                    st.warning("⚠️ No legend detected")
-            
-            if st.button("🎯 Run Classic Detection"):
-                if st.session_state.template_learned:
-                    if self.detector.detect_classic():
-                        st.success(f"✅ Classic detection: {len(self.detector.classic_results)} lines")
-                    else:
-                        st.error("❌ Classic detection failed")
-                else:
-                    st.warning("⚠️ Please learn template first")
-            
-            if st.button("🔬 Run Robust Detection"):
-                if self.detector.detect_robust():
-                    total = sum(len(results) for results in self.detector.robust_results.values())
-                    st.success(f"✅ Robust detection: {total} total detections")
-                    self._show_robust_results()
-                else:
-                    st.error("❌ Robust detection failed")
-        
-        with col2:
-            # Complete detection
-            st.subheader("Complete Detection Pipeline")
-            
-            if st.button("🚀 Run Complete Detection", type="primary"):
-                with st.spinner("Running complete detection pipeline..."):
-                    results = self.detector.detect_all()
-                    st.session_state.detection_results = results
-                
-                if results:
-                    st.success(f"✅ Detection complete! Found {len(results)} dashed lines")
-                    self._show_detection_summary()
-                else:
-                    st.warning("⚠️ No dashed lines detected")
-            
-            # Export results
-            if st.session_state.detection_results:
-                st.subheader("📤 Export Results")
-                
-                export_dir = st.text_input("Export Directory", value="output")
-                
-                if st.button("💾 Export All Formats"):
-                    with st.spinner("Exporting results..."):
-                        output_files = self.detector.export_results(export_dir)
-                    
-                    if output_files:
-                        st.success("✅ Export complete!")
-                        self._show_export_files(output_files)
-                    else:
-                        st.error("❌ Export failed")
+        """Notebook-style detection pipeline (sample-driven)."""
+        st.header("🔎 Detection (Notebook Pipeline)")
+
+        if not st.session_state.image_loaded:
+            st.warning("Please upload an image first.")
+            return
+
+        if not st.session_state.sample_params:
+            st.warning("Please learn a sample from ROI above first.")
+            return
+
+        if st.button("🚀 Run Detection (Notebook)", type="primary"):
+            with st.spinner("Running sample-driven detection..."):
+                results, debug = self._run_notebook_pipeline()
+                st.session_state.detection_results = results
+                st.session_state.notebook_debug = debug
+
+        # Show debug visuals if available
+        debug = st.session_state.get('notebook_debug', {})
+        if debug:
+            st.subheader("Debug Visuals")
+            colA, colB = st.columns(2)
+            with colA:
+                if 'img_eq' in debug:
+                    st.image(debug['img_eq'], caption="Equalized (CLAHE)", use_column_width=True, clamp=True)
+                if 'mask_width' in debug:
+                    st.image(debug['mask_width']*255, caption="Width Mask", use_column_width=True, clamp=True)
+                if 'skeleton' in debug:
+                    st.image(debug['skeleton']*255, caption="Skeleton", use_column_width=True, clamp=True)
+            with colB:
+                if 'img_bin' in debug:
+                    st.image(debug['img_bin'], caption="Binarized (Otsu, ink=white)", use_column_width=True, clamp=True)
+                if 'resp_max' in debug:
+                    st.image(debug['resp_max_norm'], caption="Matched-filter response (max over angles)", use_column_width=True, clamp=True)
+                if 'match_mask' in debug:
+                    st.image(debug['match_mask']*255, caption="Thresholded response", use_column_width=True, clamp=True)
+
+        # Overlay
+        if st.session_state.detection_results:
+            st.subheader("🖼️ Overlay")
+            overlay = self._make_overlay_from_results(st.session_state.detection_results)
+            st.image(overlay, caption="Detected dashed-line polylines (red)", use_column_width=True)
     
     def results_section(self):
         """Display detection results and statistics."""
@@ -344,15 +205,12 @@ class DashDetectionGUI:
         # Summary statistics
         st.subheader("📈 Summary Statistics")
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Lines", len(results))
-        with col2:
-            total_length = sum(line.get('length_m', 0) for line in results)
-            st.metric("Total Length", f"{total_length:.2f} m")
-        with col3:
-            avg_confidence = np.mean([line.get('confidence', 0) for line in results if 'confidence' in line])
-            st.metric("Avg Confidence", f"{avg_confidence:.3f}")
+        total_length = sum(line.get('length_m', 0) for line in results)
+        avg_confidence = np.mean([line.get('confidence', 0) for line in results if 'confidence' in line])
+        
+        st.write(f"**Total Lines:** {len(results)}")
+        st.write(f"**Total Length:** {total_length:.2f} m")
+        st.write(f"**Average Confidence:** {avg_confidence:.3f}")
         
         # Line type distribution
         st.subheader("📊 Line Type Distribution")
@@ -389,109 +247,358 @@ class DashDetectionGUI:
         if st.button("Show Detection Overlay"):
             self._show_detection_overlay()
     
-    def _show_roi_preview(self, x: int, y: int, width: int, height: int):
-        """Show preview of selected ROI."""
-        if self.detector.original_image is None:
-            return
+    def _interactive_roi_selection(self):
+        """Interactive ROI selection using drawable canvas."""
+        st.subheader("🖱️ Interactive ROI Selection")
         
-        # Create image with ROI rectangle
-        display_image = cv2.cvtColor(self.detector.original_image, cv2.COLOR_BGR2RGB)
+        # Convert image to RGB for display
+        display_image = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2RGB)
+        img_pil = Image.fromarray(display_image)
         
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.imshow(display_image)
+        # Calculate display size (limit to reasonable size for web interface)
+        h, w = display_image.shape[:2]
+        max_width = 800
+        if w > max_width:
+            scale_factor = max_width / w
+            new_width = max_width
+            new_height = int(h * scale_factor)
+        else:
+            scale_factor = 1.0
+            new_width = w
+            new_height = h
         
-        # Add ROI rectangle
-        rect = patches.Rectangle((x, y), width, height, linewidth=2, 
-                               edgecolor='red', facecolor='none')
-        ax.add_patch(rect)
+        # Resize image for display
+        img_pil_resized = img_pil.resize((new_width, new_height))
         
-        ax.set_title("ROI Preview")
-        ax.set_xlim(max(0, x-50), min(display_image.shape[1], x+width+50))
-        ax.set_ylim(min(display_image.shape[0], y+height+50), max(0, y-50))
+        # Drawing canvas
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 0, 0, 0.1)",  # Semi-transparent red fill
+            stroke_width=2,
+            stroke_color="#FF0000",  # Red stroke
+            background_image=img_pil_resized,
+            update_streamlit=True,
+            width=new_width,
+            height=new_height,
+            drawing_mode="rect",  # Rectangle drawing mode
+            point_display_radius=0,
+            key="roi_canvas",
+        )
         
-        st.pyplot(fig)
-        plt.close()
+        # Process canvas data
+        if canvas_result.json_data is not None:
+            objects = canvas_result.json_data["objects"]
+            
+            if objects:
+                # Get the last drawn rectangle
+                last_rect = objects[-1]
+                
+                if last_rect["type"] == "rect":
+                    # Extract rectangle coordinates (in display coordinates)
+                    display_x = int(last_rect["left"])
+                    display_y = int(last_rect["top"]) 
+                    display_width = int(last_rect["width"])
+                    display_height = int(last_rect["height"])
+                    
+                    # Convert back to original image coordinates
+                    roi_x = int(display_x / scale_factor)
+                    roi_y = int(display_y / scale_factor)
+                    roi_width = int(display_width / scale_factor)
+                    roi_height = int(display_height / scale_factor)
+                    
+                    # Ensure coordinates are within image bounds
+                    roi_x = max(0, min(roi_x, w - 1))
+                    roi_y = max(0, min(roi_y, h - 1))
+                    roi_width = max(10, min(roi_width, w - roi_x))
+                    roi_height = max(10, min(roi_height, h - roi_y))
+                    
+                    # Show selected ROI info
+                    st.info(f"Selected ROI: ({roi_x}, {roi_y}) - {roi_width}×{roi_height} px")
+                    
+                    # Show ROI crop preview
+                    roi_crop = self.original_image[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width]
+                    if roi_crop.size > 0:
+                        roi_rgb = cv2.cvtColor(roi_crop, cv2.COLOR_BGR2RGB)
+                        st.image(roi_rgb, caption="Selected ROI", width=200)
+                    
+                    # Learn sample params button (notebook pipeline)
+                    if st.button("🔍 Learn Sample from Selected ROI", type="primary"):
+                        params = self._learn_sample_from_roi(roi_x, roi_y, roi_width, roi_height)
+                        if params:
+                            st.success("✅ Sample learned successfully!")
+                            st.session_state.template_learned = True
+                            st.session_state.roi_coordinates = (roi_x, roi_y, roi_width, roi_height)
+                            st.session_state.sample_params = params
+                            st.write("**Sample Metrics:**")
+                            st.write(f"• Stroke Width: {params.get('stroke_width', float('nan')):.2f} px")
+                            st.write(f"• Dash Length: {params.get('dash_len', float('nan')):.2f} px")
+                            st.write(f"• Gap Length: {params.get('gap_len', float('nan')):.2f} px")
+                            st.write(f"• Period: {params.get('period_px', float('nan')):.2f} px")
+                        else:
+                            st.error("❌ Failed to learn from ROI. Please select a better ROI.")
+            else:
+                st.info("👆 Draw a rectangle around a clean dash pattern to select ROI")
         
-        # Show ROI crop
-        roi_crop = self.detector.original_image[y:y+height, x:x+width]
-        if roi_crop.size > 0:
-            roi_rgb = cv2.cvtColor(roi_crop, cv2.COLOR_BGR2RGB)
-            st.image(roi_rgb, caption="ROI Crop", width=300)
-    
-    def _show_legend_entries(self):
-        """Display detected legend entries."""
-        if not self.detector.legend_entries:
-            return
-        
-        st.subheader("📖 Legend Entries")
-        for i, entry in enumerate(self.detector.legend_entries):
-            with st.expander(f"Entry {i+1}: {entry.get('text', 'N/A')}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Type:** {entry.get('line_type', 'unknown')}")
-                    st.write(f"**Confidence:** {entry.get('confidence', 0):.3f}")
-                    st.write(f"**Method:** {entry.get('extraction_method', 'N/A')}")
-                with col2:
-                    if 'keywords' in entry:
-                        st.write(f"**Keywords:** {', '.join(entry['keywords'])}")
-                    if 'bbox' in entry:
-                        st.write(f"**BBox:** {entry['bbox']}")
-    
-    def _show_robust_results(self):
-        """Display robust detection results."""
-        if not self.detector.robust_results:
-            return
-        
-        st.subheader("🔬 Robust Detection Results")
-        for method, results in self.detector.robust_results.items():
-            st.write(f"**{method.upper()}:** {len(results)} detections")
-    
-    def _show_detection_summary(self):
-        """Display detection summary."""
-        stats = self.detector.get_detection_statistics()
-        
-        with st.expander("📊 Detection Statistics"):
-            st.json(stats)
-    
-    def _show_export_files(self, output_files: dict):
-        """Display exported files."""
-        st.subheader("📁 Exported Files")
-        for format_name, file_path in output_files.items():
-            st.write(f"**{format_name.upper()}:** `{file_path}`")
-    
-    def _show_detection_overlay(self):
-        """Show detection results overlaid on original image."""
-        if (self.detector.original_image is None or 
-            not st.session_state.detection_results):
-            return
-        
-        # Create overlay
-        overlay = self.detector.original_image.copy()
-        
-        # Colors for different line types
-        colors = {
-            'dashed_service_line': (0, 0, 255),     # Red
-            'dashed_utility_line': (255, 0, 0),    # Blue
-            'dashed_boundary': (0, 255, 0),        # Green
-            'unknown': (255, 0, 255),              # Magenta
-            'default': (0, 255, 255)               # Yellow
-        }
-        
-        for line in st.session_state.detection_results:
-            points = line.get('points', [])
-            if len(points) < 2:
+        # Instructions
+        st.markdown("""
+        **How to use:**
+        - 🖱️ Click and drag to draw a rectangle around a dash sample
+        - 🎯 Select 1-2 complete dash cycles for best results  
+        - ✨ The red rectangle shows your selection
+        - 🔄 Draw a new rectangle to replace the previous selection
+        """)
+
+    def _learn_sample_from_roi(self, x: int, y: int, w: int, h: int) -> Optional[Dict[str, float]]:
+        """Learn stroke width, dash length, gap and period from selected ROI (notebook logic)."""
+        try:
+            if self.original_image is None:
+                return None
+            gray = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY)
+            roi = gray[y:y+h, x:x+w]
+            if roi.size == 0 or roi.shape[0] < 10 or roi.shape[1] < 10:
+                return None
+
+            roi_blur = cv2.GaussianBlur(roi, (3, 3), 0)
+            _, roi_bin = cv2.threshold(roi_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+            # Stroke width via distance transform (ink=1)
+            dist = cv2.distanceTransform(roi_bin, cv2.DIST_L2, 3)
+            ink_mask = roi_bin > 0
+            if np.count_nonzero(ink_mask) < 50:
+                return None
+            stroke_width = float(np.median(dist[ink_mask]) * 2.0)
+            stroke_width = max(1.0, stroke_width)
+
+            # Orientation via covariance of ink coordinates
+            ys, xs = np.where(ink_mask)
+            cov = np.cov(xs, ys)
+            eigvals, eigvecs = np.linalg.eig(cov)
+            main_axis = eigvecs[:, np.argmax(eigvals)]
+            angle_rad = math.atan2(main_axis[1], main_axis[0])
+            angle_deg = -np.degrees(angle_rad)  # negative for cv2 rotation
+
+            # Rotate with padding to avoid cropping
+            h_roi, w_roi = roi_bin.shape
+            center = (w_roi // 2, h_roi // 2)
+            M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+            cos = abs(M[0, 0]); sin = abs(M[0, 1])
+            new_w = int((h_roi * sin) + (w_roi * cos))
+            new_h = int((h_roi * cos) + (w_roi * sin))
+            M[0, 2] += (new_w / 2) - center[0]
+            M[1, 2] += (new_h / 2) - center[1]
+            roi_rot = cv2.warpAffine(roi_bin, M, (new_w, new_h), flags=cv2.INTER_NEAREST, borderValue=0)
+
+            # Projection along dash axis
+            proj = np.sum(roi_rot > 0, axis=0).astype(np.float32)
+            if proj.max() > proj.min():
+                proj = (proj - proj.min()) / (proj.max() - proj.min() + 1e-6)
+            else:
+                proj = np.zeros_like(proj)
+
+            peaks, _ = find_peaks(proj, height=0.3, distance=max(2, int(stroke_width)))
+            period_px = float(np.median(np.diff(peaks))) if len(peaks) > 1 else float('nan')
+
+            dash_widths: List[int] = []
+            th = 0.3
+            for p in peaks:
+                left = int(p)
+                while left > 0 and proj[left] > th:
+                    left -= 1
+                right = int(p)
+                while right < len(proj) - 1 and proj[right] > th:
+                    right += 1
+                dash_widths.append(right - left)
+
+            dash_len = float(np.median(dash_widths)) if len(dash_widths) > 0 else float('nan')
+            gap_len = float(period_px - dash_len) if (not math.isnan(period_px) and not math.isnan(dash_len)) else float('nan')
+
+            return {
+                'stroke_width': stroke_width,
+                'dash_len': dash_len,
+                'gap_len': gap_len,
+                'period_px': period_px,
+                'roi_angle_deg': float(-angle_deg)  # store original orientation if needed
+            }
+        except Exception:
+            return None
+
+    def _run_notebook_pipeline(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Run the notebook's sample-driven detection and return result dicts plus debug images."""
+        gray = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY)
+
+        # Step 2 — Preprocess full image (CLAHE + Otsu INV)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        img_eq = clahe.apply(gray)
+        _, img_bin = cv2.threshold(img_eq, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        # Step 3 — Width gating
+        sp = st.session_state.sample_params
+        stroke_width = sp.get('stroke_width', 3.0)
+        dist_full = cv2.distanceTransform(img_bin, cv2.DIST_L2, 3)
+        tol = max(1.0, 0.15 * stroke_width)
+        lower = max(0.5, (stroke_width / 2.0) - tol)
+        upper = (stroke_width / 2.0) + tol
+        mask_width = ((dist_full >= lower) & (dist_full <= upper)).astype(np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        mask_width = cv2.morphologyEx(mask_width, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        # Step 3b — Oriented matched filtering
+        def make_line_kernel(length: float, thickness: float, angle_deg: float) -> np.ndarray:
+            size = max(int(length * 1.5), int(thickness * 6), 9)
+            if size % 2 == 0:
+                size += 1
+            kern = np.zeros((size, size), np.float32)
+            cv2.line(kern, (size // 10, size // 2), (size - size // 10, size // 2), 1.0, int(max(1, round(thickness))))
+            M = cv2.getRotationMatrix2D((size // 2, size // 2), angle_deg, 1.0)
+            kern = cv2.warpAffine(kern, M, (size, size))
+            s = kern.sum() + 1e-6
+            return kern / s
+
+        dash_len = sp.get('dash_len', float('nan'))
+        dash_for_kernel = dash_len if (not math.isnan(dash_len) and dash_len > 2) else max(6.0, stroke_width * 3.0)
+        angles = np.arange(0, 180, 10.0)
+        resp_max = np.zeros_like(dist_full, dtype=np.float32)
+        mask_width_f = mask_width.astype(np.float32)
+        for ang in angles:
+            k = make_line_kernel(dash_for_kernel, stroke_width, float(ang))
+            r = cv2.filter2D(mask_width_f, -1, k, borderType=cv2.BORDER_REPLICATE)
+            resp_max = np.maximum(resp_max, r)
+
+        thr = 0.4 * float(resp_max.max() if resp_max.size else 0.0)
+        match_mask = (resp_max >= thr).astype(np.uint8)
+        se = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        match_mask = cv2.morphologyEx(match_mask, cv2.MORPH_CLOSE, se, iterations=1)
+
+        # Step 4 — Skeletonize and trace polylines
+        skel = skeletonize(match_mask > 0).astype(np.uint8)
+        polylines = self._trace_skeleton_to_polylines(skel)
+
+        # Convert to result dicts
+        results = self._polylines_to_results(polylines)
+
+        # Prepare debug visuals
+        debug: Dict[str, Any] = {}
+        debug['img_eq'] = img_eq
+        debug['img_bin'] = img_bin
+        debug['mask_width'] = mask_width
+        # Normalize resp for display
+        rmin, rmax = float(resp_max.min()), float(resp_max.max())
+        if rmax > rmin:
+            resp_norm = ((resp_max - rmin) / (rmax - rmin + 1e-6) * 255.0).astype(np.uint8)
+        else:
+            resp_norm = (resp_max * 0).astype(np.uint8)
+        debug['resp_max_norm'] = resp_norm
+        debug['match_mask'] = match_mask
+        debug['skeleton'] = skel
+
+        return results, debug
+
+    def _trace_skeleton_to_polylines(self, skel: np.ndarray) -> List[List[Tuple[int, int]]]:
+        """Trace skeleton (uint8) into ordered polylines; returns list of (y, x) points."""
+        H, W = skel.shape
+        visited = np.zeros_like(skel, dtype=bool)
+
+        def neighbors(y: int, x: int):
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < H and 0 <= nx < W and skel[ny, nx]:
+                        yield ny, nx
+
+        def degree(y: int, x: int) -> int:
+            return sum(1 for _ in neighbors(y, x))
+
+        polylines: List[List[Tuple[int, int]]] = []
+
+        def trace_from(start: Tuple[int, int]) -> List[Tuple[int, int]]:
+            path: List[Tuple[int, int]] = [start]
+            y, x = start
+            visited[y, x] = True
+            nbrs = [n for n in neighbors(y, x) if not visited[n]]
+            if not nbrs:
+                return path
+            y, x = nbrs[0]
+            path.append((y, x))
+            visited[y, x] = True
+            while True:
+                nbrs = [n for n in neighbors(y, x) if not visited[n]]
+                if not nbrs:
+                    break
+                if len(nbrs) == 1:
+                    y, x = nbrs[0]
+                    path.append((y, x))
+                    visited[y, x] = True
+                else:
+                    break
+            return path
+
+        # Trace from endpoints first
+        for sy in range(H):
+            for sx in range(W):
+                if skel[sy, sx] and not visited[sy, sx] and degree(sy, sx) == 1:
+                    poly = trace_from((sy, sx))
+                    if len(poly) >= 10:
+                        polylines.append(poly)
+
+        # Then any remaining loops
+        for sy in range(H):
+            for sx in range(W):
+                if skel[sy, sx] and not visited[sy, sx]:
+                    poly = trace_from((sy, sx))
+                    if len(poly) >= 10:
+                        polylines.append(poly)
+
+        return polylines
+
+    def _polylines_to_results(self, polylines: List[List[Tuple[int, int]]]) -> List[Dict[str, Any]]:
+        """Convert (y,x) polylines to result dicts compatible with results UI."""
+        def length_of_poly(points_xy: List[Tuple[int, int]]) -> float:
+            total = 0.0
+            for i in range(len(points_xy) - 1):
+                x1, y1 = points_xy[i]
+                x2, y2 = points_xy[i+1]
+                total += float(((x2 - x1)**2 + (y2 - y1)**2) ** 0.5)
+            return total
+
+        results: List[Dict[str, Any]] = []
+        for idx, poly in enumerate(polylines):
+            if len(poly) < 2:
                 continue
-            
-            line_type = line.get('classified_type', line.get('class', 'unknown'))
-            color = colors.get(line_type, colors['default'])
-            
-            # Draw line
-            pts = np.array(points, dtype=np.int32)
-            cv2.polylines(overlay, [pts], False, color, 2)
-        
-        # Convert to RGB and display
-        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-        st.image(overlay_rgb, caption="Detection Results Overlay", use_column_width=True)
+            # Convert to (x,y)
+            points_xy: List[Tuple[int, int]] = [(int(x), int(y)) for (y, x) in poly]
+            length_px = length_of_poly(points_xy)
+            dx = points_xy[-1][0] - points_xy[0][0]
+            dy = points_xy[-1][1] - points_xy[0][1]
+            angle_deg = math.degrees(math.atan2(dy, dx)) if (dx != 0 or dy != 0) else 0.0
+            results.append({
+                'id': f'nb_line_{idx}',
+                'class': 'dashed_service_line',
+                'points': points_xy,
+                'angle_deg': angle_deg,
+                'length_px': length_px,
+                'confidence': 0.0,
+                'detection_method': 'notebook'
+            })
+        return results
+
+    def _make_overlay_from_results(self, results: List[Dict[str, Any]]) -> np.ndarray:
+        """Create an RGB overlay image with results drawn in red over the original image."""
+        base = self.original_image
+        if base is None:
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        overlay = base.copy()
+        for line in results:
+            pts_list = line.get('points', [])
+            if len(pts_list) < 2:
+                continue
+            pts = np.array(pts_list, dtype=np.int32)
+            cv2.polylines(overlay, [pts], isClosed=False, color=(0, 0, 255), thickness=2)
+        return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+    
+    # Removed manual ROI preview and classic/robust unrelated helpers to keep only notebook pipeline
+    
+    # Removed legacy legend/classic/robust visualization utilities
 
 
 def main():

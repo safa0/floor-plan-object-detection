@@ -446,7 +446,7 @@ class IntegratedDashDetector:
             Dictionary mapping format names to output file paths
         """
         if not self.combined_results:
-            print("Error: No results to export")
+            print(f"Error: No results to export. Combined results: {len(self.combined_results) if self.combined_results else 0}")
             return {}
         
         if self.original_image is None:
