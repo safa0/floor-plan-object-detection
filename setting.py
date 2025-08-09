@@ -16,8 +16,16 @@ def get_model_confidence():
     Get model confidence from user input.
     """
     confidence = float(st.slider(
-        "Select Model Confidence", 25, 100, 40)) / 100
+        "Select Model Confidence", 10, 100, 40)) / 100
     return confidence
+
+def get_label_font_size():
+    """
+    Get annotation label text size from user input.
+    """
+    label_font_size = int(st.slider(
+        "Annotation Label Text Size (px)", 10, 30, 12))
+    return label_font_size
 
 def select_labels(available_labels):
     """
