@@ -22,12 +22,14 @@ try:
     if hasattr(torch, "serialization") and hasattr(torch.serialization, "add_safe_globals"):
         torch.serialization.add_safe_globals([_UltralyticsDetectionModel])
     # Force torch.load to default to weights_only=False (trust only if checkpoint source is trusted)
-    _orig_torch_load = torch.load
-    def _torch_load_compat(*args, **kwargs):
-        if "weights_only" not in kwargs:
-            kwargs["weights_only"] = False
-        return _orig_torch_load(*args, **kwargs)
-    torch.load = _torch_load_compat
+    if not hasattr(torch, '_ultralytics_patched'):
+        _orig_torch_load = torch.load
+        def _torch_load_compat(*args, **kwargs):
+            if "weights_only" not in kwargs:
+                kwargs["weights_only"] = False
+            return _orig_torch_load(*args, **kwargs)
+        torch.load = _torch_load_compat
+        torch._ultralytics_patched = True
 except Exception:
     st.warning("Unable to configure PyTorch safe-loading for Ultralytics model")
     print("Warning: Unable to configure PyTorch safe-loading for Ultralytics model") 
@@ -36,6 +38,7 @@ except Exception:
 def load_image_with_quality_preservation(source_img):
     """
     Load image while preserving maximum quality, especially for PNG files.
+    Enhanced preprocessing for better detection accuracy.
     """
     # Ensure file pointer is at the beginning
     source_img.seek(0)
@@ -50,6 +53,15 @@ def load_image_with_quality_preservation(source_img):
             img = img.convert('RGBA')
         elif img.mode not in ['RGB', 'RGBA']:
             img = img.convert('RGBA')
+    
+    # Ensure consistent RGB format for YOLO (no alpha channel issues)
+    if img.mode == 'RGBA':
+        # Create white background for transparency
+        background = PIL.Image.new('RGB', img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+        img = background
+    elif img.mode != 'RGB':
+        img = img.convert('RGB')
     
     return img
 
@@ -144,7 +156,30 @@ def main():
             "Choose an image...", type=("jpg", "jpeg", "png"))
 
         # Model Options
+        st.subheader("Detection Settings")
+        
+        # Model selection (keeping structure for future expansion)
+        model_option = st.selectbox(
+            "Detection Model",
+            ["YOLOv8 (Current)"],
+            index=0,
+            help="Detection model: YOLOv8 with your custom floor plan classes"
+        )
+        
         confidence = setting.get_model_confidence()
+        
+        # Advanced detection options
+        with st.expander("🔧 Advanced Settings"):
+            iou_threshold = st.slider(
+                "IoU Threshold", 0.1, 0.9, 0.45, 0.05,
+                help="Non-Maximum Suppression threshold - higher values reduce duplicate detections"
+            )
+            img_size = st.selectbox(
+                "Input Image Size", 
+                [416, 512, 640, 800, 1024, 1280, 1536, 1920, 2560, 3840, 4096],
+                index=2,  # Default to 640
+                help="Larger sizes = better accuracy but slower inference. Very large sizes (2560+) for high-resolution floor plans"
+            )
         
         # Initialize session state for dynamic scaling
         if 'dynamic_font_calculated' not in st.session_state:
@@ -210,7 +245,7 @@ def main():
             st.session_state.dynamic_font_calculated = False
             st.caption("Manual override - dynamic scaling disabled for current session")
 
-        # Multiselect for selecting labels
+        # Label selection for floor plan objects
         available_labels = ['Column', 'Curtain Wall', 'Dimension', 'Door', 'Railing', 'Sliding Door', 'Stair Case', 'Wall', 'Window']
         selected_labels = setting.select_labels(available_labels)
 
@@ -234,26 +269,64 @@ def main():
         else:
             st.warning("Please upload an image.")
 
+    # Load model with explicit GPU usage for better performance
     model = YOLO('best.pt')
     
-    # Check if we need to run new detection
+    # Explicitly move model to GPU if available for faster inference
+    if torch.cuda.is_available():
+        model.to('cuda')
+        st.sidebar.success(f"🚀 GPU Acceleration: ENABLED ({torch.cuda.get_device_name(0)})")
+    else:
+        st.sidebar.warning("⚠️ GPU Acceleration: DISABLED (CPU inference)")
+    
+    # Display model information
+    st.sidebar.info(f"**Selected Model:** {model_option}\n\n🔄 Custom trained YOLOv8 for floor plan detection")
+    
+    # Check if we need to run new detection (considering new parameters)
     need_new_detection = (st.session_state.detection_results is None or
                          st.session_state.last_confidence != confidence or
-                         st.session_state.last_selected_labels != selected_labels)
+                         st.session_state.last_selected_labels != selected_labels or
+                         getattr(st.session_state, 'last_iou_threshold', None) != iou_threshold or
+                         getattr(st.session_state, 'last_img_size', None) != img_size)
 
     # Run detection only when needed (button click or parameters changed)
     if st.sidebar.button('Detect Objects') and source_img:
         if not source_img:
             st.warning("Please upload an image before detecting objects.")
         else:
-            # Run new detection
-            res = model.predict(uploaded_image, conf=confidence)
-            filtered_boxes = [box for box in res[0].boxes if model.names[int(box.cls)] in selected_labels]
+            # Run new detection with optimized parameters for better accuracy and speed
+            with st.spinner('🔍 Running object detection...'):
+                import time
+                start_time = time.time()
+                
+                # Enhanced prediction with user-configurable parameters for accuracy
+                res = model.predict(
+                    uploaded_image, 
+                    conf=confidence,
+                    iou=iou_threshold,  # User-configurable IoU threshold for NMS
+                    device='cuda' if torch.cuda.is_available() else 'cpu',  # Explicit device
+                    verbose=False,  # Reduce console output
+                    imgsz=img_size,  # User-configurable input size for accuracy/speed balance
+                    half=torch.cuda.is_available()  # Use half precision on GPU for speed
+                )
+                
+                inference_time = time.time() - start_time
+                filtered_boxes = [box for box in res[0].boxes if model.names[int(box.cls)] in selected_labels]
+                
+                # Display performance metrics
+                device_used = "GPU" if torch.cuda.is_available() else "CPU"
+                st.sidebar.info(f"⚡ Inference: {inference_time:.2f}s on {device_used}")
+                st.sidebar.info(f"📊 Objects detected: {len(filtered_boxes)}/{len(res[0].boxes) if res[0].boxes is not None else 0}")
+                
+                # Model-specific performance insights
+                st.sidebar.success("✨ Using custom YOLOv8: Optimized for floor plan elements")
             
             # Store detection results in session state
             st.session_state.detection_results = filtered_boxes
             st.session_state.last_confidence = confidence
             st.session_state.last_selected_labels = selected_labels.copy()
+            st.session_state.last_iou_threshold = iou_threshold
+            st.session_state.last_img_size = img_size
 
     # Display results if we have detection data
     if st.session_state.detection_results is not None and st.session_state.original_image is not None:

@@ -16,7 +16,8 @@ def get_model_confidence():
     Get model confidence from user input.
     """
     confidence = float(st.slider(
-        "Select Model Confidence", 10, 100, 40)) / 100
+        "Select Model Confidence", 10, 100, 40,
+        help="Higher values = more certain detections (fewer false positives), Lower values = catch more objects (more false positives)")) / 100
     return confidence
 
 def get_label_font_size():
