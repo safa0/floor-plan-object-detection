@@ -66,9 +66,9 @@ def load_image_with_quality_preservation(source_img):
     return img
 
 
-def draw_annotations(image, filtered_boxes, model, label_font_size):
+def draw_annotations(image, filtered_boxes, model, label_font_size, show_confidence=True):
     """
-    Draw annotations on image with specified font size.
+    Draw annotations on image with specified font size and optional confidence scores.
     """
     annotated_image = image.copy()
     draw = ImageDraw.Draw(annotated_image)
@@ -109,7 +109,11 @@ def draw_annotations(image, filtered_boxes, model, label_font_size):
         xyxy = box.xyxy[0]
         x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
         cls_id = int(box.cls)
-        label = model.names[cls_id]
+        confidence = float(box.conf[0])
+        if show_confidence:
+            label = f"{model.names[cls_id]} ({confidence:.2f})"
+        else:
+            label = model.names[cls_id]
         color = palette[cls_id % len(palette)]
 
         # Draw rectangle
@@ -179,6 +183,11 @@ def main():
                 [416, 512, 640, 800, 1024, 1280, 1536, 1920, 2560, 3840, 4096],
                 index=2,  # Default to 640
                 help="Larger sizes = better accuracy but slower inference. Very large sizes (2560+) for high-resolution floor plans"
+            )
+            show_confidence = st.checkbox(
+                "Show Confidence Scores", 
+                value=True,
+                help="Display confidence scores in labels (e.g., 'Door (0.85)')"
             )
         
         # Initialize session state for dynamic scaling
@@ -288,6 +297,10 @@ def main():
                          st.session_state.last_selected_labels != selected_labels or
                          getattr(st.session_state, 'last_iou_threshold', None) != iou_threshold or
                          getattr(st.session_state, 'last_img_size', None) != img_size)
+    
+    # Check if we need to re-render annotations (confidence display change doesn't require re-detection)
+    need_rerender = (need_new_detection or 
+                    getattr(st.session_state, 'last_show_confidence', None) != show_confidence)
 
     # Run detection only when needed (button click or parameters changed)
     if st.sidebar.button('Detect Objects') and source_img:
@@ -327,6 +340,7 @@ def main():
             st.session_state.last_selected_labels = selected_labels.copy()
             st.session_state.last_iou_threshold = iou_threshold
             st.session_state.last_img_size = img_size
+            st.session_state.last_show_confidence = show_confidence
 
     # Display results if we have detection data
     if st.session_state.detection_results is not None and st.session_state.original_image is not None:
@@ -335,7 +349,8 @@ def main():
             st.session_state.original_image, 
             st.session_state.detection_results, 
             model, 
-            label_font_size
+            label_font_size,
+            show_confidence
         )
         
         with col2:
