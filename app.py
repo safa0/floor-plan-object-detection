@@ -281,7 +281,7 @@ def create_image_tiles(image, tile_size=640, overlap=64, save_debug_tiles=True, 
     
     Args:
         image: PIL Image object
-        tile_size: Size of each tile (default 512x512)
+        tile_size: Size of each tile (default 640x640)
         overlap: Overlap between tiles in pixels (default 64)
         save_debug_tiles: Whether to save individual tile images for debugging
         debug_folder: Folder name to save debug tiles
@@ -371,14 +371,14 @@ def process_single_tile(model_path, tile_data, conf, iou, device, tile_size):
     detections = []
     
     try:
-        # Run detection on tile
+        # Run detection on tile using actual tile dimensions to avoid letterboxing
         results = worker_model.predict(
             tile,
             conf=conf,
             iou=iou,
             device=device,
             verbose=False,
-            imgsz=tile_size,
+            imgsz=(tile_width, tile_height),
             half=device == 'cuda'
         )
         
@@ -410,7 +410,7 @@ def process_single_tile(model_path, tile_data, conf, iou, device, tile_size):
     return detections
 
 
-def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu', max_workers=None, save_debug_tiles=True):
+def detect_objects_tiled_parallel(model, image, tile_size=640, overlap=64, conf=0.4, iou=0.45, device='cpu', max_workers=None, save_debug_tiles=True):
     """
     Perform parallel object detection on a large image using tiling approach.
     
@@ -483,7 +483,7 @@ def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=
     yield 1.0, all_detections
 
 
-def detect_objects_tiled(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu', save_debug_tiles=True):
+def detect_objects_tiled(model, image, tile_size=640, overlap=64, conf=0.4, iou=0.45, device='cpu', save_debug_tiles=True):
     """
     Perform object detection on a large image using tiling approach (sequential version for fallback).
     
@@ -506,14 +506,14 @@ def detect_objects_tiled(model, image, tile_size=512, overlap=64, conf=0.4, iou=
     
     # Process each tile
     for i, (tile, x_offset, y_offset, tile_width, tile_height) in enumerate(tiles):
-        # Run detection on tile
+        # Run detection on tile using actual tile dimensions to avoid letterboxing
         results = model.predict(
             tile,
             conf=conf,
             iou=iou,
             device=device,
             verbose=False,
-            imgsz=tile_size,
+            imgsz=(tile_width, tile_height),
             half=device == 'cuda'
         )
         
@@ -709,7 +709,7 @@ def main():
         
         # Initialize default values for tiling and parallel processing
         use_tiling = True
-        tile_size = 512
+        tile_size = 640
         tile_overlap = 64
         use_parallel = True
         max_workers = 1
@@ -733,8 +733,8 @@ def main():
                 tile_size = st.selectbox(
                     "Tile Size", 
                     [256, 384, 512, 640, 768, 1024, 2048],
-                    index=2,  # Default to 512
-                    help="Size of each tile. 512px is optimal for most YOLO models. Smaller = faster, Larger = better for large objects"
+                    index=3,  # Default to 640
+                    help="Size of each tile. 640px matches model training resolution for optimal accuracy. Smaller = faster, Larger = better for large objects"
                 )
                 
                 tile_overlap = st.slider(
