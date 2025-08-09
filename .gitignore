@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging / distribution
+build/
+dist/
+develop-eggs/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+.python-version
+
+# Logs & caches
+logs/
+*.log
+.cache/
+**/.cache/
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.nox/
+.tox/
+
+# Testing / coverage
+.coverage
+.coverage.*
+coverage.xml
+nosetests.xml
+*.cover
+*.py,cover
+hypothesis/
+
+# Editors / IDE
+.vscode/
+.idea/
+.ropeproject/
+.spyderproject
+.spyproject
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# Documentation
+site/
+docs/_build/
+
+# Flask / Django (common)
+instance/
+.webassets-cache/
+*.sqlite3
+*.sqlite3-journal
+local_settings.py
+
+# Data & artifacts (ML/vision)
+data/
+datasets/
+outputs/
+checkpoints/
+models/
+weights/
+runs/
+lightning_logs/
+wandb/
+mlruns/
+cometml/
+
+# Large model/binary artifacts (adjust as needed)
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.engine
+*.trt
+*.bin
+*.pb
