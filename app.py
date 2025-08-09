@@ -10,6 +10,8 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
+import os
+import shutil
 
 # Increase PIL's decompression bomb limit to support large floor plan images
 # Current image: 238,861,095 pixels, default limit: 178,956,970 pixels
@@ -273,7 +275,7 @@ def create_tile_overlay_visualization(image, tile_size=640, overlap=64):
     return overlay_image
 
 
-def create_image_tiles(image, tile_size=640, overlap=64):
+def create_image_tiles(image, tile_size=640, overlap=64, save_debug_tiles=True, debug_folder="debug_tiles"):
     """
     Create tiles from a large image with specified overlap.
     
@@ -281,6 +283,8 @@ def create_image_tiles(image, tile_size=640, overlap=64):
         image: PIL Image object
         tile_size: Size of each tile (default 512x512)
         overlap: Overlap between tiles in pixels (default 64)
+        save_debug_tiles: Whether to save individual tile images for debugging
+        debug_folder: Folder name to save debug tiles
     
     Returns:
         List of tuples: (tile_image, x_offset, y_offset, tile_width, tile_height)
@@ -289,6 +293,22 @@ def create_image_tiles(image, tile_size=640, overlap=64):
     step_size = tile_size - overlap
     tiles = []
     
+    # Create debug folder if saving debug tiles
+    if save_debug_tiles:
+        if os.path.exists(debug_folder):
+            shutil.rmtree(debug_folder)  # Clean up existing folder
+        os.makedirs(debug_folder, exist_ok=True)
+        
+        # Save original image info
+        info_file = os.path.join(debug_folder, "tile_info.txt")
+        with open(info_file, 'w') as f:
+            f.write(f"Original image size: {width} x {height}\n")
+            f.write(f"Tile size: {tile_size} x {tile_size}\n")
+            f.write(f"Overlap: {overlap} pixels\n")
+            f.write(f"Step size: {step_size} pixels\n")
+            f.write(f"Estimated tiles: {math.ceil(width / step_size)} x {math.ceil(height / step_size)}\n\n")
+    
+    tile_count = 0
     for y in range(0, height, step_size):
         for x in range(0, width, step_size):
             # Calculate tile boundaries
@@ -302,8 +322,25 @@ def create_image_tiles(image, tile_size=640, overlap=64):
             # Create tile
             tile = image.crop((x_start, y_start, x_end, y_end))
             
+            # Save debug tile if requested
+            if save_debug_tiles:
+                tile_filename = f"tile_{tile_count:03d}_x{x_start}-{x_end}_y{y_start}-{y_end}_{x_end-x_start}x{y_end-y_start}.png"
+                tile_path = os.path.join(debug_folder, tile_filename)
+                tile.save(tile_path, "PNG", optimize=True)
+                
+                # Append tile info to the info file
+                with open(info_file, 'a') as f:
+                    f.write(f"Tile {tile_count}: {tile_filename}\n")
+                    f.write(f"  Position: ({x_start}, {y_start}) to ({x_end}, {y_end})\n")
+                    f.write(f"  Size: {x_end-x_start} x {y_end-y_start}\n\n")
+            
             # Store tile with its position information
             tiles.append((tile, x_start, y_start, x_end - x_start, y_end - y_start))
+            tile_count += 1
+    
+    if save_debug_tiles:
+        print(f"Debug: Saved {tile_count} tiles to '{debug_folder}' folder")
+        st.sidebar.info(f"🐛 Debug: Saved {tile_count} tiles to '{debug_folder}' folder")
     
     return tiles
 
@@ -373,7 +410,7 @@ def process_single_tile(model_path, tile_data, conf, iou, device, tile_size):
     return detections
 
 
-def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu', max_workers=None):
+def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu', max_workers=None, save_debug_tiles=True):
     """
     Perform parallel object detection on a large image using tiling approach.
     
@@ -386,12 +423,13 @@ def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=
         iou: IoU threshold for NMS
         device: Device to run inference on
         max_workers: Maximum number of parallel workers (None for auto-detection)
+        save_debug_tiles: Whether to save individual tile images for debugging
     
     Returns:
         Generator yielding (progress, all_detections)
     """
     # Create tiles
-    tiles = create_image_tiles(image, tile_size, overlap)
+    tiles = create_image_tiles(image, tile_size, overlap, save_debug_tiles=save_debug_tiles)
     total_tiles = len(tiles)
     
     # Prepare tile data with IDs
@@ -445,7 +483,7 @@ def detect_objects_tiled_parallel(model, image, tile_size=512, overlap=64, conf=
     yield 1.0, all_detections
 
 
-def detect_objects_tiled(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu'):
+def detect_objects_tiled(model, image, tile_size=512, overlap=64, conf=0.4, iou=0.45, device='cpu', save_debug_tiles=True):
     """
     Perform object detection on a large image using tiling approach (sequential version for fallback).
     
@@ -457,12 +495,13 @@ def detect_objects_tiled(model, image, tile_size=512, overlap=64, conf=0.4, iou=
         conf: Confidence threshold
         iou: IoU threshold for NMS
         device: Device to run inference on
+        save_debug_tiles: Whether to save individual tile images for debugging
     
     Returns:
         List of detection boxes in original image coordinates
     """
     # Create tiles
-    tiles = create_image_tiles(image, tile_size, overlap)
+    tiles = create_image_tiles(image, tile_size, overlap, save_debug_tiles=save_debug_tiles)
     all_detections = []
     
     # Process each tile
@@ -674,6 +713,7 @@ def main():
         tile_overlap = 64
         use_parallel = True
         max_workers = 1
+        save_debug_tiles = True
         
         # Tiling options for large images
         with st.expander("🏗️ Image Tiling (Recommended for Large Images)"):
@@ -681,6 +721,12 @@ def main():
                 "Enable Image Tiling", 
                 value=True,
                 help="Split large images into smaller tiles for better YOLO performance. Recommended for images larger than 2000x2000 pixels."
+            )
+            
+            save_debug_tiles = st.checkbox(
+                "Save Debug Tiles", 
+                value=True,
+                help="Save individual tile images to 'debug_tiles' folder for debugging purposes. Helps visualize how the image is being split."
             )
             
             if use_tiling:
@@ -759,6 +805,7 @@ def main():
                 tile_overlap = 0
                 use_parallel = False  # No parallel processing when tiling is disabled
                 max_workers = 1
+                save_debug_tiles = False  # No debug tiles when tiling is disabled
         
         # Initialize session state for dynamic scaling
         if 'dynamic_font_calculated' not in st.session_state:
@@ -890,7 +937,8 @@ def main():
                          getattr(st.session_state, 'last_tile_size', None) != tile_size or
                          getattr(st.session_state, 'last_tile_overlap', None) != tile_overlap or
                          getattr(st.session_state, 'last_use_parallel', None) != use_parallel or
-                         getattr(st.session_state, 'last_max_workers', None) != max_workers)
+                         getattr(st.session_state, 'last_max_workers', None) != max_workers or
+                         getattr(st.session_state, 'last_save_debug_tiles', None) != save_debug_tiles)
     
     # Check if we need to re-render annotations (confidence display change doesn't require re-detection)
     need_rerender = (need_new_detection or 
@@ -920,13 +968,13 @@ def main():
                     if use_parallel and max_workers > 1:
                         # Use parallel processing
                         detection_generator = detect_objects_tiled_parallel(
-                            model, uploaded_image, tile_size, tile_overlap, confidence, iou_threshold, device, max_workers
+                            model, uploaded_image, tile_size, tile_overlap, confidence, iou_threshold, device, max_workers, save_debug_tiles
                         )
                         processing_method = f"parallel ({max_workers} workers)"
                     else:
                         # Use sequential processing
                         detection_generator = detect_objects_tiled(
-                            model, uploaded_image, tile_size, tile_overlap, confidence, iou_threshold, device
+                            model, uploaded_image, tile_size, tile_overlap, confidence, iou_threshold, device, save_debug_tiles
                         )
                         processing_method = "sequential"
                     
@@ -935,8 +983,8 @@ def main():
                         progress_bar.progress(progress)
                         all_detections = detections
                         if progress < 1.0:
-                            current_tile = int(progress * len(create_image_tiles(uploaded_image, tile_size, tile_overlap)))
-                            total_tiles = len(create_image_tiles(uploaded_image, tile_size, tile_overlap))
+                            current_tile = int(progress * len(create_image_tiles(uploaded_image, tile_size, tile_overlap, save_debug_tiles=False)))
+                            total_tiles = len(create_image_tiles(uploaded_image, tile_size, tile_overlap, save_debug_tiles=False))
                             status_text.text(f"Processing tile {current_tile}/{total_tiles}")
                     
                     status_text.text("Applying global Non-Maximum Suppression...")
@@ -1004,6 +1052,7 @@ def main():
             st.session_state.last_tile_overlap = tile_overlap
             st.session_state.last_use_parallel = use_parallel
             st.session_state.last_max_workers = max_workers
+            st.session_state.last_save_debug_tiles = save_debug_tiles
 
     # Display results if we have detection data
     if st.session_state.detection_results is not None and st.session_state.original_image is not None:
