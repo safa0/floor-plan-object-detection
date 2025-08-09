@@ -4,6 +4,24 @@ import PIL
 import helper
 import setting
 
+# Allowlist Ultralytics model class for PyTorch 2.6+ safe-loading
+try:
+    import torch
+    from ultralytics.nn.tasks import DetectionModel as _UltralyticsDetectionModel
+    if hasattr(torch, "serialization") and hasattr(torch.serialization, "add_safe_globals"):
+        torch.serialization.add_safe_globals([_UltralyticsDetectionModel])
+    # Force torch.load to default to weights_only=False (trust only if checkpoint source is trusted)
+    _orig_torch_load = torch.load
+    def _torch_load_compat(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _torch_load_compat
+except Exception:
+    st.warning("Unable to configure PyTorch safe-loading for Ultralytics model")
+    print("Warning: Unable to configure PyTorch safe-loading for Ultralytics model") 
+
+
 def main():
     """
     Main function for the Streamlit app.
