@@ -340,7 +340,7 @@ def create_image_tiles(image, tile_size=640, overlap=64, save_debug_tiles=True, 
     
     if save_debug_tiles:
         print(f"Debug: Saved {tile_count} tiles to '{debug_folder}' folder")
-        st.sidebar.info(f"🐛 Debug: Saved {tile_count} tiles to '{debug_folder}' folder")
+        st.sidebar.info(f"Debug: Saved {tile_count} tiles to '{debug_folder}' folder")
     
     return tiles
 
@@ -696,7 +696,7 @@ def main():
             source_img.seek(0)
         
         # Advanced detection options
-        with st.expander("🔧 Advanced Settings"):
+        with st.expander("Advanced Settings"):
             iou_threshold = st.slider(
                 "IoU Threshold", 0.1, 0.9, 0.45, 0.05,
                 help="Non-Maximum Suppression threshold - higher values reduce duplicate detections"
@@ -716,7 +716,7 @@ def main():
         save_debug_tiles = True
         
         # Tiling options for large images
-        with st.expander("🏗️ Image Tiling (Recommended for Large Images)"):
+        with st.expander("Image Tiling (Recommended for Large Images)"):
             use_tiling = st.checkbox(
                 "Enable Image Tiling", 
                 value=True,
@@ -744,7 +744,7 @@ def main():
                 )
                 
                 # Parallel processing options
-                st.subheader("🚀 Parallel Processing")
+                st.subheader("Parallel Processing")
                 use_parallel = st.checkbox(
                     "Enable Parallel Processing", 
                     value=True,
@@ -781,7 +781,7 @@ def main():
                     total_tiles = num_tiles_x * num_tiles_y
                     
                     if total_tiles > 1:
-                        st.info(f"📊 Image will be split into {total_tiles} tiles ({num_tiles_x}×{num_tiles_y})")
+                        st.info(f"Image will be split into {total_tiles} tiles ({num_tiles_x}×{num_tiles_y})")
                         
                         # Show processing time estimate
                         base_time_per_tile = 0.2  # Rough estimate: 0.2s per tile
@@ -796,11 +796,11 @@ def main():
                             processing_note = " (sequential)"
                         
                         if estimated_time > 60:
-                            st.warning(f"⏱️ Estimated processing time: {estimated_time/60:.1f} minutes{processing_note}")
+                            st.warning(f"Estimated processing time: {estimated_time/60:.1f} minutes{processing_note}")
                         else:
-                            st.info(f"⏱️ Estimated processing time: {estimated_time:.1f} seconds{processing_note}")
+                            st.info(f"Estimated processing time: {estimated_time:.1f} seconds{processing_note}")
                     else:
-                        st.info("📊 Image is small enough for single-tile processing")
+                        st.info("Image is small enough for single-tile processing")
             else:
                 tile_overlap = 0
                 use_parallel = False  # No parallel processing when tiling is disabled
@@ -906,7 +906,7 @@ def main():
                 total_tiles = num_tiles_x * num_tiles_y
                 
                 st.info(f"""
-                📊 **Tile Configuration:**
+                **Tile Configuration:**
                 - Grid: {num_tiles_x} × {num_tiles_y} = {total_tiles} tiles
                 - Tile size: {tile_size}×{tile_size} pixels
                 - Overlap: {tile_overlap} pixels
@@ -921,12 +921,12 @@ def main():
     # Explicitly move model to GPU if available for faster inference
     if torch.cuda.is_available():
         model.to('cuda')
-        st.sidebar.success(f"🚀 GPU Acceleration: ENABLED ({torch.cuda.get_device_name(0)})")
+        st.sidebar.success(f"GPU Acceleration: ENABLED ({torch.cuda.get_device_name(0)})")
     else:
-        st.sidebar.warning("⚠️ GPU Acceleration: DISABLED (CPU inference)")
+        st.sidebar.warning("GPU Acceleration: DISABLED (CPU inference)")
     
     # Display model information
-    st.sidebar.info(f"**Selected Model:** {model_option}\n\n🔄 Custom trained YOLOv8 for floor plan detection")
+    st.sidebar.info(f"**Selected Model:** {model_option}\n\nCustom trained YOLOv8 for floor plan detection")
     
     # Check if we need to run new detection (considering new parameters)
     need_new_detection = (st.session_state.detection_results is None or
@@ -953,7 +953,7 @@ def main():
             
             if use_tiling and current_image_size and (current_image_size[0] > tile_size or current_image_size[1] > tile_size):
                 # Use tiled detection for large images
-                with st.spinner('🔍 Running tiled object detection...'):
+                with st.spinner('Running tiled object detection...'):
                     import time
                     start_time = time.time()
                     
@@ -1004,19 +1004,19 @@ def main():
                     
                     # Display performance metrics
                     device_used = "GPU" if torch.cuda.is_available() else "CPU"
-                    st.sidebar.info(f"⚡ Tiled Inference: {inference_time:.2f}s on {device_used}")
-                    st.sidebar.info(f"🧩 Processed {total_tiles} tiles ({processing_method})")
-                    st.sidebar.info(f"📊 Objects detected: {len(filtered_boxes)} (after global NMS)")
+                    st.sidebar.info(f"Tiled Inference: {inference_time:.2f}s on {device_used}")
+                    st.sidebar.info(f"Processed {total_tiles} tiles ({processing_method})")
+                    st.sidebar.info(f"Objects detected: {len(filtered_boxes)} (after global NMS)")
                     
                     # Model-specific performance insights
                     if use_parallel and max_workers > 1:
                         speedup_estimate = min(max_workers, total_tiles) * 0.7  # Rough estimate accounting for overhead
-                        st.sidebar.success(f"✨ Using parallel tiled YOLOv8: ~{speedup_estimate:.1f}x speedup potential")
+                        st.sidebar.success(f"Using parallel tiled YOLOv8: ~{speedup_estimate:.1f}x speedup potential")
                     else:
-                        st.sidebar.success("✨ Using tiled YOLOv8: Optimized for large floor plans")
+                        st.sidebar.success("Using tiled YOLOv8: Optimized for large floor plans")
             else:
                 # Use standard detection for small images or when tiling is disabled
-                with st.spinner('🔍 Running object detection...'):
+                with st.spinner('Running object detection...'):
                     import time
                     start_time = time.time()
                     
@@ -1035,11 +1035,11 @@ def main():
                     
                     # Display performance metrics
                     device_used = "GPU" if torch.cuda.is_available() else "CPU"
-                    st.sidebar.info(f"⚡ Inference: {inference_time:.2f}s on {device_used}")
-                    st.sidebar.info(f"📊 Objects detected: {len(filtered_boxes)}/{len(res[0].boxes) if res[0].boxes is not None else 0}")
+                    st.sidebar.info(f"Inference: {inference_time:.2f}s on {device_used}")
+                    st.sidebar.info(f"Objects detected: {len(filtered_boxes)}/{len(res[0].boxes) if res[0].boxes is not None else 0}")
                     
                     # Model-specific performance insights
-                    st.sidebar.success("✨ Using standard YOLOv8: Optimized for floor plan elements")
+                    st.sidebar.success("Using standard YOLOv8: Optimized for floor plan elements")
             
             # Store detection results in session state
             st.session_state.detection_results = filtered_boxes

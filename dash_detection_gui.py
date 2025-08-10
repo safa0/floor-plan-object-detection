@@ -55,11 +55,10 @@ class DashDetectionGUI:
         """Run the Streamlit application."""
         st.set_page_config(
             page_title="Dashed Line Detection",
-            page_icon="📐",
             layout="wide"
         )
         
-        st.title("🏗️ Floor Plan Dashed Line Detection System")
+        st.title("Floor Plan Dashed Line Detection System")
         st.markdown("---")
         
         # Main content
@@ -79,7 +78,7 @@ class DashDetectionGUI:
     
     def image_upload_section(self):
         """Handle image upload and display."""
-        st.header("📁 Image Upload")
+        st.header("Image Upload")
         
         uploaded_file = st.file_uploader(
             "Choose a floor plan image",
@@ -108,7 +107,7 @@ class DashDetectionGUI:
             
             if st.session_state.image_loaded and st.session_state.original_image is not None:
                 # Display image
-                st.subheader("📷 Loaded Image")
+                st.subheader("Loaded Image")
                 
                 # Convert to RGB for display
                 display_image = cv2.cvtColor(st.session_state.original_image, cv2.COLOR_BGR2RGB)
@@ -123,7 +122,7 @@ class DashDetectionGUI:
     
     def template_learning_section(self):
         """Handle sample learning from interactive ROI selection (notebook pipeline)."""
-        st.header("🎯 Sample Learning (Notebook Pipeline)")
+        st.header("Sample Learning (Notebook Pipeline)")
         
         if not st.session_state.image_loaded:
             st.warning("Please upload an image first.")
@@ -133,7 +132,7 @@ class DashDetectionGUI:
         if st.session_state.sample_params:
             sp = st.session_state.sample_params
             st.info(
-                f"📏 Sample params — stroke≈{sp.get('stroke_width', float('nan')):.1f}px, "
+                f"Sample params — stroke≈{sp.get('stroke_width', float('nan')):.1f}px, "
                 f"dash≈{sp.get('dash_len', float('nan')):.1f}px, gap≈{sp.get('gap_len', float('nan')):.1f}px, "
                 f"period≈{sp.get('period_px', float('nan')):.1f}px"
             )
@@ -150,7 +149,7 @@ class DashDetectionGUI:
     
     def detection_section(self):
         """Notebook-style detection pipeline (sample-driven)."""
-        st.header("🔎 Detection (Notebook Pipeline)")
+        st.header("Detection (Notebook Pipeline)")
 
         if not st.session_state.image_loaded:
             st.warning("Please upload an image first.")
@@ -160,7 +159,7 @@ class DashDetectionGUI:
             st.warning("Please learn a sample from ROI above first.")
             return
 
-        if st.button("🚀 Run Detection (Notebook)", type="primary"):
+        if st.button("Run Detection (Notebook)", type="primary"):
             with st.spinner("Running sample-driven detection..."):
                 results, debug = self._run_notebook_pipeline()
                 st.session_state.detection_results = results
@@ -188,13 +187,13 @@ class DashDetectionGUI:
 
         # Overlay
         if st.session_state.detection_results:
-            st.subheader("🖼️ Overlay")
+            st.subheader("Overlay")
             overlay = self._make_overlay_from_results(st.session_state.detection_results)
             st.image(overlay, caption="Detected dashed-line polylines (red)", use_column_width=True)
     
     def results_section(self):
         """Display detection results and statistics."""
-        st.header("📊 Results")
+        st.header("Results")
         
         if not st.session_state.detection_results:
             st.info("Run detection to see results here.")
@@ -203,7 +202,7 @@ class DashDetectionGUI:
         results = st.session_state.detection_results
         
         # Summary statistics
-        st.subheader("📈 Summary Statistics")
+        st.subheader("Summary Statistics")
         
         total_length = sum(line.get('length_m', 0) for line in results)
         avg_confidence = np.mean([line.get('confidence', 0) for line in results if 'confidence' in line])
@@ -213,7 +212,7 @@ class DashDetectionGUI:
         st.write(f"**Average Confidence:** {avg_confidence:.3f}")
         
         # Line type distribution
-        st.subheader("📊 Line Type Distribution")
+        st.subheader("Line Type Distribution")
         line_types = {}
         for line in results:
             line_type = line.get('classified_type', line.get('class', 'unknown'))
@@ -224,7 +223,7 @@ class DashDetectionGUI:
             st.bar_chart(df.set_index('Line Type'))
         
         # Detailed results table
-        st.subheader("📋 Detailed Results")
+        st.subheader("Detailed Results")
         
         if st.checkbox("Show detailed table"):
             df_data = []
@@ -243,13 +242,13 @@ class DashDetectionGUI:
             st.dataframe(df, use_container_width=True)
         
         # Visualization
-        st.subheader("🖼️ Visualization")
+        st.subheader("Visualization")
         if st.button("Show Detection Overlay"):
             self._show_detection_overlay()
     
     def _interactive_roi_selection(self):
         """Interactive ROI selection using drawable canvas."""
-        st.subheader("🖱️ Interactive ROI Selection")
+        st.subheader("Interactive ROI Selection")
         
         # Convert image to RGB for display
         display_image = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2RGB)
@@ -321,10 +320,10 @@ class DashDetectionGUI:
                         st.image(roi_rgb, caption="Selected ROI", width=200)
                     
                     # Learn sample params button (notebook pipeline)
-                    if st.button("🔍 Learn Sample from Selected ROI", type="primary"):
+                    if st.button("Learn Sample from Selected ROI", type="primary"):
                         params = self._learn_sample_from_roi(roi_x, roi_y, roi_width, roi_height)
                         if params:
-                            st.success("✅ Sample learned successfully!")
+                            st.success("Sample learned successfully.")
                             st.session_state.template_learned = True
                             st.session_state.roi_coordinates = (roi_x, roi_y, roi_width, roi_height)
                             st.session_state.sample_params = params
@@ -337,7 +336,7 @@ class DashDetectionGUI:
                             # Show the learned 1D projection signal (as in the notebook)
                             debug = st.session_state.get('notebook_debug', {})
                             if 'roi_proj' in debug:
-                                st.subheader("📉 Sample Signal")
+                                st.subheader("Sample Signal")
                                 try:
                                     proj_vals = debug['roi_proj']
                                     # Ensure it's a 1D list-like for Streamlit chart
@@ -353,17 +352,17 @@ class DashDetectionGUI:
                             if 'roi_rot' in debug:
                                 st.image(debug['roi_rot'], caption="Rotated ROI used for projection", use_column_width=True, clamp=True)
                         else:
-                            st.error("❌ Failed to learn from ROI. Please select a better ROI.")
+                            st.error("Failed to learn from ROI. Please select a better ROI.")
             else:
-                st.info("👆 Draw a rectangle around a clean dash pattern to select ROI")
+                st.info("Draw a rectangle around a clean dash pattern to select ROI")
         
         # Instructions
         st.markdown("""
         **How to use:**
-        - 🖱️ Click and drag to draw a rectangle around a dash sample
-        - 🎯 Select 1-2 complete dash cycles for best results  
-        - ✨ The red rectangle shows your selection
-        - 🔄 Draw a new rectangle to replace the previous selection
+        - Click and drag to draw a rectangle around a dash sample
+        - Select 1-2 complete dash cycles for best results  
+        - The red rectangle shows your selection
+        - Draw a new rectangle to replace the previous selection
         """)
 
     def _learn_sample_from_roi(self, x: int, y: int, w: int, h: int) -> Optional[Dict[str, float]]:
