@@ -333,6 +333,25 @@ class DashDetectionGUI:
                             st.write(f"• Dash Length: {params.get('dash_len', float('nan')):.2f} px")
                             st.write(f"• Gap Length: {params.get('gap_len', float('nan')):.2f} px")
                             st.write(f"• Period: {params.get('period_px', float('nan')):.2f} px")
+
+                            # Show the learned 1D projection signal (as in the notebook)
+                            debug = st.session_state.get('notebook_debug', {})
+                            if 'roi_proj' in debug:
+                                st.subheader("📉 Sample Signal")
+                                try:
+                                    proj_vals = debug['roi_proj']
+                                    # Ensure it's a 1D list-like for Streamlit chart
+                                    if isinstance(proj_vals, np.ndarray):
+                                        proj_vals = proj_vals.astype(float).tolist()
+                                    st.line_chart(proj_vals)
+                                    peaks = debug.get('roi_peaks', [])
+                                    if isinstance(peaks, np.ndarray):
+                                        peaks = peaks.tolist()
+                                    st.caption(f"Detected peaks: {len(peaks) if peaks is not None else 0}")
+                                except Exception:
+                                    pass
+                            if 'roi_rot' in debug:
+                                st.image(debug['roi_rot'], caption="Rotated ROI used for projection", use_column_width=True, clamp=True)
                         else:
                             st.error("❌ Failed to learn from ROI. Please select a better ROI.")
             else:
@@ -410,6 +429,13 @@ class DashDetectionGUI:
 
             dash_len = float(np.median(dash_widths)) if len(dash_widths) > 0 else float('nan')
             gap_len = float(period_px - dash_len) if (not math.isnan(period_px) and not math.isnan(dash_len)) else float('nan')
+
+            # Save debug data so GUI can show the signal similar to the notebook
+            if 'notebook_debug' not in st.session_state:
+                st.session_state.notebook_debug = {}
+            st.session_state.notebook_debug['roi_proj'] = proj
+            st.session_state.notebook_debug['roi_peaks'] = peaks
+            st.session_state.notebook_debug['roi_rot'] = roi_rot
 
             return {
                 'stroke_width': stroke_width,
